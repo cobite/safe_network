@@ -26,6 +26,9 @@ crates_bumped=()
 while IFS= read -r line; do
   name=$(echo "$line" | awk -F"\`" '{print $2}')
   version=$(echo "$line" | awk -F"-> " '{print $2}')
+  if [[ -z "$version" ]]; then
+    version=$(echo "$line" | awk -F": " '{print $2}')
+  fi
   crates_bumped+=("${name}-v${version}")
 done < <(cat bump_version_output | grep "^\*")
 
@@ -46,6 +49,8 @@ if [[ $len -eq 0 ]]; then
   fi
 fi
 
+echo "Detected changes:"
+echo "${crates_bumped[@]}"
 if [[ -n "$SUFFIX" ]]; then
   echo "We are releasing to the $SUFFIX channel"
   echo "Versions with $SUFFIX are not supported by release-plz"
@@ -65,11 +70,16 @@ for crate in "${crates_bumped[@]}"; do
   echo "----------------------------------------------------------"
   if [[ -n "$SUFFIX" ]]; then
     # if we're already in a release channel, reapplying the suffix will reset things.
-    if [[ "$version" == *"-alpha."* || "$version" == *"-beta."* ]]; then
-      base_version=$(echo "$version" | sed -E 's/(-alpha\.[0-9]+|-beta\.[0-9]+)$//')
-      pre_release_identifier=$(echo "$version" | sed -E 's/.*-(alpha|beta)\.([0-9]+)$/\2/')
-      new_version="${base_version}-${SUFFIX}.$pre_release_identifier"
+    if [[ "$version" == *"-alpha"* || "$version" == *"-beta"* ]]; then
+      echo "An alpha or beta version is already applied"
+      base_version=$(echo "$version" | sed -E 's/(-alpha(\.[0-9]+)?|-beta(\.[0-9]+)?)$//')
+      pre_release_identifier=$(echo "$version" | grep -oE '(alpha|beta)\.([0-9]+)$' | cut -d'.' -f2)
+      if [[ -z "$pre_release_identifier" ]]; then
+        pre_release_identifier=0
+      fi
+      new_version="${base_version}-${SUFFIX}.${pre_release_identifier}"
     else
+      echo "No release channel suffix currently applied"
       new_version="${version}-${SUFFIX}.0"
     fi
   else
@@ -77,8 +87,9 @@ for crate in "${crates_bumped[@]}"; do
     new_version=$(echo "$version" | sed -E 's/(-alpha\.[0-9]+|-beta\.[0-9]+)$//')
   fi
 
+  echo "The $crate_name crate is currently set to $version"
   echo "Using set-version to apply $new_version to $crate_name"
-  cargo set-version -p $crate_name $new_version
+  cargo set-version -p "$crate_name" "$new_version"
   commit_message="${commit_message}${crate_name}-v$new_version/" # append crate to commit message
 done
 commit_message=${commit_message%/} # strip off trailing '/' character
